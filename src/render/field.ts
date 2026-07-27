@@ -6,6 +6,7 @@
 
 import { FIELD } from '../game/constants';
 import { DEFAULT_FIELDERS, type FieldingPlay } from '../game/fielding';
+import { BASE_POSITIONS, type ThrowingPlay } from '../game/throwing';
 import type { GameState } from '../game/engine';
 import type { WallImpact } from '../game/types';
 import type { LiveView } from '../hooks/useGameEngine';
@@ -73,6 +74,9 @@ export function drawField(
     view.phase === 'resolving' && play && (play.fieldable || play.type === 'wall-assist')
       ? play
       : null;
+  const throwPlay = view.phase === 'resolving' ? view.result?.throwing : undefined;
+  const excluded = [activePlay?.fielder.id, throwPlay?.fielder.id, throwPlay?.receiver.id]
+    .filter(Boolean) as string[];
 
   // A short camera bump when the fielder crashes into the wall on a robbery.
   const bump = activePlay?.type === 'wall-assist' ? cameraBump(activePlay, view) : null;
@@ -85,13 +89,14 @@ export function drawField(
   drawWall(ctx, proj);
   drawInfield(ctx, proj);
 
-  drawPlayers(ctx, proj, activePlay?.fielder.id);
+  drawPlayers(ctx, proj, excluded);
   drawRunners(ctx, proj, state);
 
   if (view.phase === 'pitching') {
     drawReticle(ctx, proj, view.pitchProgress);
     drawPitch(ctx, proj, view.pitchProgress);
   } else if (view.phase === 'resolving') {
+    if (throwPlay) drawThrowPlay(ctx, proj, throwPlay, view);
     if (view.result?.trajectory) drawBattedBall(ctx, proj, view);
     const wallImpact = view.result?.trajectory?.wallImpact;
     if (wallImpact) drawWallImpact(ctx, proj, wallImpact, view.ballAnimSeconds);
@@ -236,11 +241,11 @@ function drawWall(ctx: CanvasRenderingContext2D, proj: Projection) {
 }
 
 function drawInfield(ctx: CanvasRenderingContext2D, proj: Projection) {
-  // Dirt diamond around the base paths.
-  const homePt = proj.toScreen(0, 0, 0);
-  const firstPt = proj.toScreen(63, 63, 0);
-  const secondPt = proj.toScreen(0, 127, 0);
-  const thirdPt = proj.toScreen(-63, 63, 0);
+  // Dirt diamond around the base paths (shared base coordinates).
+  const homePt = proj.toScreen(BASE_POSITIONS.home.x, BASE_POSITIONS.home.y, 0);
+  const firstPt = proj.toScreen(BASE_POSITIONS.first.x, BASE_POSITIONS.first.y, 0);
+  const secondPt = proj.toScreen(BASE_POSITIONS.second.x, BASE_POSITIONS.second.y, 0);
+  const thirdPt = proj.toScreen(BASE_POSITIONS.third.x, BASE_POSITIONS.third.y, 0);
 
   ctx.beginPath();
   ctx.moveTo(homePt.sx, homePt.sy);
@@ -272,11 +277,11 @@ function drawInfield(ctx: CanvasRenderingContext2D, proj: Projection) {
 function drawPlayers(
   ctx: CanvasRenderingContext2D,
   proj: Projection,
-  excludeFielderId?: string,
+  excludeIds: string[] = [],
 ) {
   // The defensive alignment (pitcher is part of it), each at its home spot.
   for (const f of DEFAULT_FIELDERS) {
-    if (f.id === excludeFielderId) continue;
+    if (excludeIds.includes(f.id)) continue;
     const p = proj.toScreen(f.x, f.y, 0);
     drawBlob(ctx, p.sx, p.sy, 8 * p.scale + 2, COLORS.fielder, COLORS.fielderOutline);
   }
@@ -288,15 +293,11 @@ function drawPlayers(
 
 /** Little dots on the diamond for any runners currently aboard. */
 function drawRunners(ctx: CanvasRenderingContext2D, proj: Projection, state: GameState) {
-  const spots: Array<[number, number]> = [
-    [63, 63], // first
-    [0, 127], // second
-    [-63, 63], // third
-  ];
+  const spots = [BASE_POSITIONS.first, BASE_POSITIONS.second, BASE_POSITIONS.third];
   state.bases.forEach((occupied, i) => {
     if (!occupied) return;
-    const [x, y] = spots[i];
-    const p = proj.toScreen(x, y, 0);
+    const spot = spots[i];
+    const p = proj.toScreen(spot.x, spot.y, 0);
     drawBlob(ctx, p.sx, p.sy, 7 * p.scale + 1, '#ffd24a', COLORS.fielderOutline);
   });
 }
@@ -430,6 +431,91 @@ function drawWallAssist(
     ctx.textAlign = 'center';
     ctx.fillStyle = COLORS.reticleHot;
     ctx.fillText('ROB IT!', target.sx, target.sy - 22);
+    ctx.restore();
+  }
+}
+
+/** The ground-ball throw to first: the batter-runner sprints, the infielder
+ *  scoops, a timing ring cues the release, the ball flies to the bag, and a
+ *  dust puff marks the close play. All procedural. */
+function drawThrowPlay(
+  ctx: CanvasRenderingContext2D,
+  proj: Projection,
+  play: ThrowingPlay,
+  view: LiveView,
+) {
+  const ballMs = view.ballAnimSeconds * 1000;
+  const first = BASE_POSITIONS.first;
+
+  // The batter-runner sprinting home → first.
+  const runnerT = clamp01(ballMs / (play.runnerArrivalSec * 1000));
+  const rx = BASE_POSITIONS.home.x + (first.x - BASE_POSITIONS.home.x) * runnerT;
+  const ry = BASE_POSITIONS.home.y + (first.y - BASE_POSITIONS.home.y) * runnerT;
+  const rp = proj.toScreen(rx, ry, 0);
+  drawBlob(ctx, rp.sx, rp.sy, 9 * rp.scale + 1, COLORS.batter, COLORS.fielderOutline);
+
+  // The infielder charging the ball, dipping into a scoop on arrival.
+  const fielderT = clamp01(ballMs / (play.pickupTimeSec * 1000));
+  const fx = play.fielder.x + (play.pickupPoint.x - play.fielder.x) * fielderT;
+  const fy = play.fielder.y + (play.pickupPoint.y - play.fielder.y) * fielderT;
+  const scooping = fielderT >= 1 && ballMs < play.pickupTimeSec * 1000 + 200;
+  const fp = proj.toScreen(fx, fy, 0);
+  if (scooping) {
+    ctx.beginPath();
+    ctx.ellipse(fp.sx, fp.sy + 4, 7, 3, 0, 0, Math.PI * 2);
+    ctx.fillStyle = COLORS.dirt;
+    ctx.fill();
+  }
+  drawBlob(ctx, fp.sx, fp.sy, 9 * fp.scale + 2, COLORS.fielderActive, COLORS.fielderOutline);
+
+  // The first baseman waiting on the bag.
+  const firstScreen = proj.toScreen(first.x, first.y, 0);
+  drawBlob(ctx, firstScreen.sx, firstScreen.sy, 9 * firstScreen.scale + 2, COLORS.fielder, COLORS.fielderOutline);
+
+  // Release-timing ring at the fielder, closing on the ideal release.
+  if (play.window) {
+    const remaining = Math.abs(play.window.centerMs - ballMs);
+    const hot = remaining <= play.window.successHalfMs;
+    ctx.beginPath();
+    ctx.arc(fp.sx, fp.sy, 12 + Math.min(60, remaining / 6), 0, Math.PI * 2);
+    ctx.strokeStyle = hot ? COLORS.reticleHot : COLORS.reticle;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    if (view.trickPrompt) {
+      ctx.save();
+      ctx.font = '800 16px "Trebuchet MS", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = COLORS.reticleHot;
+      ctx.fillText('THROW!', fp.sx, fp.sy - 22);
+      ctx.restore();
+    }
+
+    // The thrown ball travelling to first after the release.
+    const releaseSec = play.window.centerMs / 1000;
+    const span = Math.max(0.05, play.idealThrowArrivalSec - releaseSec);
+    const ballT = clamp01((view.ballAnimSeconds - releaseSec) / span);
+    if (ballT > 0 && ballT < 1) {
+      const bx = play.pickupPoint.x + (first.x - play.pickupPoint.x) * ballT;
+      const by = play.pickupPoint.y + (first.y - play.pickupPoint.y) * ballT;
+      const bp = proj.toScreen(bx, by, 4);
+      drawBall(ctx, bp.sx, bp.sy, 5);
+    }
+  }
+
+  // Close-play dust puff at the bag around the moment of decision.
+  const closeMs = Math.min(play.idealThrowArrivalSec, play.runnerArrivalSec) * 1000;
+  if (ballMs >= closeMs && ballMs < closeMs + 320) {
+    const fade = 1 - (ballMs - closeMs) / 320;
+    ctx.save();
+    ctx.globalAlpha = 0.55 * fade;
+    ctx.fillStyle = COLORS.dirt;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const r = 5 + (1 - fade) * 22;
+      ctx.beginPath();
+      ctx.arc(firstScreen.sx + Math.cos(a) * r, firstScreen.sy - Math.abs(Math.sin(a)) * r * 0.5, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 }

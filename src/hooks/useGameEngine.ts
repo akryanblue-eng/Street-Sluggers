@@ -26,7 +26,8 @@ export interface UseGameEngine {
   start: () => void;
   restart: () => void;
   swing: (type: SwingType) => void;
-  trickCatch: () => void;
+  /** The defensive timing press — dispatches to the pending catch or throw. */
+  defensiveAction: () => void;
   toggleSound: () => void;
 }
 
@@ -43,6 +44,8 @@ export function useGameEngine(seed?: number): UseGameEngine {
   const wallSoundRef = useRef<boolean>(false);
   /** Guards the one-shot sneaker-plant scuff on a wall-assist play. */
   const plantSoundRef = useRef<boolean>(false);
+  /** Guards the one-shot scoop on a ground-ball throw play. */
+  const scoopSoundRef = useRef<boolean>(false);
   const liveRef = useRef<LiveView>({
     phase: 'menu',
     pitchProgress: 0,
@@ -56,6 +59,15 @@ export function useGameEngine(seed?: number): UseGameEngine {
   }, []);
 
   const playResultSound = useCallback((result: PlayResult) => {
+    if (result.throwKind === 'throw-out') {
+      sound.play('glove');
+      sound.play('out');
+      return;
+    }
+    if (result.throwKind && result.throwKind !== 'none') {
+      sound.play('safe'); // beat the throw / pulled wide
+      return;
+    }
     if (result.catchKind === 'wall-trick') {
       sound.play('glove');
       sound.play('cheer');
@@ -94,6 +106,7 @@ export function useGameEngine(seed?: number): UseGameEngine {
       finalizeRef.current = 0;
       wallSoundRef.current = false;
       plantSoundRef.current = false;
+      scoopSoundRef.current = false;
       liveRef.current.result = result;
       liveRef.current.ballAnimSeconds = 0;
       liveRef.current.trickPrompt = false;
@@ -111,6 +124,7 @@ export function useGameEngine(seed?: number): UseGameEngine {
       finalizeRef.current = 0;
       wallSoundRef.current = false;
       plantSoundRef.current = false;
+      scoopSoundRef.current = false;
       liveRef.current.result = null;
       liveRef.current.trickPrompt = false;
       sound.play('pitch');
@@ -145,20 +159,31 @@ export function useGameEngine(seed?: number): UseGameEngine {
         }
 
         // Sneaker scuff as the fielder plants against the wall (wall-assist).
-        const win = s.lastResult?.fielding;
+        const wallPlay = s.lastResult?.fielding;
         if (
-          win?.type === 'wall-assist' &&
-          win.trickWindow &&
+          wallPlay?.type === 'wall-assist' &&
+          wallPlay.trickWindow &&
           !plantSoundRef.current &&
-          ballMs >= win.trickWindow.openMs
+          ballMs >= wallPlay.trickWindow.openMs
         ) {
           plantSoundRef.current = true;
           sound.play('plant');
         }
 
+        // Scoop as the infielder gloves a grounder on a throw play.
+        const throwPlay = s.lastResult?.throwing;
+        if (
+          throwPlay &&
+          !scoopSoundRef.current &&
+          ballMs >= throwPlay.pickupTimeSec * 1000
+        ) {
+          scoopSoundRef.current = true;
+          sound.play('scoop');
+        }
+
         if (engine.hasPendingPlay()) {
-          // A fielding play is in flight: run the trick-catch window, then settle.
-          const win = engine.activeTrickWindow();
+          // A defensive play is unfolding: run its timing window, then settle.
+          const win = engine.activeTrickWindow() ?? engine.activeThrowWindow();
           liveRef.current.trickPrompt =
             !!win && ballMs >= win.openMs && ballMs <= win.closeMs;
           const resolvePointMs = win ? win.closeMs : flightMs;
@@ -217,12 +242,19 @@ export function useGameEngine(seed?: number): UseGameEngine {
     [enterResolving],
   );
 
-  const trickCatch = useCallback(() => {
+  const defensiveAction = useCallback(() => {
     const engine = engineRef.current;
-    if (!engine.hasPendingPlay()) return;
+    const kind = engine.pendingKind();
+    if (!kind) return;
     sound.resume();
-    const pressMs = (performance.now() - resolveStartRef.current);
-    const result = engine.registerTrickAttempt(pressMs);
+    const pressMs = performance.now() - resolveStartRef.current;
+    let result: PlayResult | null;
+    if (kind === 'catch') {
+      result = engine.registerTrickAttempt(pressMs);
+    } else {
+      result = engine.registerThrowAttempt(pressMs);
+      sound.play('whoosh');
+    }
     if (result) liveRef.current.result = result;
   }, []);
 
@@ -238,8 +270,8 @@ export function useGameEngine(seed?: number): UseGameEngine {
   const getLiveView = useCallback(() => liveRef.current, []);
 
   return useMemo(
-    () => ({ state, soundOn, getLiveView, start, restart, swing, trickCatch, toggleSound }),
-    [state, soundOn, getLiveView, start, restart, swing, trickCatch, toggleSound],
+    () => ({ state, soundOn, getLiveView, start, restart, swing, defensiveAction, toggleSound }),
+    [state, soundOn, getLiveView, start, restart, swing, defensiveAction, toggleSound],
   );
 }
 

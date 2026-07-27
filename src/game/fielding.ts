@@ -23,16 +23,20 @@ export interface Fielder {
   y: number;
   /** May attempt a wall-assisted robbery (default outfielders LF/CF/RF only). */
   wallEligible?: boolean;
+  /** May field a grounder and throw to first (default P/2B/SS/3B). */
+  throwEligible?: boolean;
+  /** Covers first base to receive the throw (default 1B). */
+  firstBaseReceiver?: boolean;
 }
 
 /** A fixed defensive alignment. Positions are arcade-spaced, not to scale. */
 export const DEFAULT_FIELDERS: readonly Fielder[] = [
-  { id: 'P', label: 'Pitcher', x: 0, y: 60 },
+  { id: 'P', label: 'Pitcher', x: 0, y: 60, throwEligible: true },
   { id: 'C', label: 'Catcher', x: 0, y: -4 },
-  { id: '1B', label: 'First', x: 58, y: 84 },
-  { id: '2B', label: 'Second', x: 34, y: 138 },
-  { id: 'SS', label: 'Short', x: -34, y: 138 },
-  { id: '3B', label: 'Third', x: -58, y: 84 },
+  { id: '1B', label: 'First', x: 58, y: 84, firstBaseReceiver: true },
+  { id: '2B', label: 'Second', x: 34, y: 138, throwEligible: true },
+  { id: 'SS', label: 'Short', x: -34, y: 138, throwEligible: true },
+  { id: '3B', label: 'Third', x: -58, y: 84, throwEligible: true },
   { id: 'LF', label: 'Left', x: -168, y: 250, wallEligible: true },
   { id: 'CF', label: 'Center', x: 0, y: 312, wallEligible: true },
   { id: 'RF', label: 'Right', x: 168, y: 250, wallEligible: true },

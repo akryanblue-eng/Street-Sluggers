@@ -12,7 +12,7 @@ const LONG_PRESS_MS = 240;
 
 export function App() {
   const game = useGameEngine();
-  const { state, swing, trickCatch, start, restart } = game;
+  const { state, swing, defensiveAction, start, restart } = game;
 
   const pressTimer = useRef<number | null>(null);
   const pressFired = useRef(false);
@@ -32,7 +32,7 @@ export function App() {
       if (state.phase === 'resolving') {
         if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyK') {
           e.preventDefault();
-          trickCatch();
+          defensiveAction();
         }
         return;
       }
@@ -46,7 +46,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.phase, swing, trickCatch, start, restart]);
+  }, [state.phase, swing, defensiveAction, start, restart]);
 
   // Touch / mouse: tap = contact, long-press = power. During a batted ball,
   // any press attempts a trick catch.
@@ -54,7 +54,7 @@ export function App() {
     (e: React.PointerEvent) => {
       if (state.phase === 'resolving') {
         e.preventDefault();
-        trickCatch();
+        defensiveAction();
         return;
       }
       if (state.phase !== 'pitching') return;
@@ -65,7 +65,7 @@ export function App() {
         swing('power');
       }, LONG_PRESS_MS);
     },
-    [state.phase, swing, trickCatch],
+    [state.phase, swing, defensiveAction],
   );
 
   const endPress = useCallback(

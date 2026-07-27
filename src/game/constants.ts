@@ -93,6 +93,39 @@ export const WALL_CATCH = {
   maxArrivalGapSec: 0.35,
 } as const;
 
+/**
+ * Ground-ball classification for the throw-to-first play (SS-THROW-001).
+ * Starting arcade values, not permanent canon.
+ */
+export const GROUND_BALL = {
+  /** A ball peaking above this is a fly/liner, not a grounder, ft. */
+  maxApexHeight: 12,
+  /** A grounder must land within this radius to be an infield play, ft. */
+  maxPickupDistance: 185,
+  /** How long after the ball lands a fielder may still reach it to field, s. */
+  maxPickupLagSec: 0.65,
+  /** Delay from reaching the ball to completing the scoop, s. */
+  pickupDelaySec: 0.18,
+} as const;
+
+/** Throw-to-first calibration (SS-THROW-001). Starting values, not canon. */
+export const THROWING = {
+  /** Thrown-ball speed, ft/s. */
+  throwSpeed: 135,
+  /** Delay from the release press to the ball leaving the hand, s. */
+  releaseDelaySec: 0.22,
+  /** How long the batter-runner takes to run home to first, s. */
+  runnerHomeToFirstSec: 4.15,
+  /** How long after contact the runner gets going, s. */
+  runnerStartDelaySec: 0.08,
+  /** Half-width of the window in which a throw press is accepted, ms. */
+  windowHalfMs: 280,
+  /** Half-width of the clean-throw success window, ms. */
+  successHalfMs: 100,
+  /** A tie (or near-tie) at the bag goes to the runner, s. */
+  tieGoesToRunnerSec: 0.03,
+} as const;
+
 /** Game rules for the vertical slice. */
 export const RULES = {
   inningsPerGame: 3,

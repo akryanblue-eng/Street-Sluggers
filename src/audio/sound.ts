@@ -12,7 +12,10 @@ export type SoundName =
   | 'cheer'
   | 'wall'
   | 'plant'
-  | 'glove';
+  | 'glove'
+  | 'scoop'
+  | 'whoosh'
+  | 'safe';
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
@@ -84,6 +87,21 @@ class SoundEngine {
         // Sharp leather pop of the snag.
         this.blip(now, 900, 240, 'square', 0.08);
         this.noise(now + 0.01, 0.05, 0.16);
+        break;
+      case 'scoop':
+        // Short gritty scoop off the dirt.
+        this.noise(now, 0.08, 0.16);
+        this.blip(now, 220, 160, 'triangle', 0.07);
+        break;
+      case 'whoosh':
+        // The throw leaving the hand.
+        this.blip(now, 520, 180, 'sine', 0.14);
+        this.noise(now, 0.1, 0.1);
+        break;
+      case 'safe':
+        // Umpire's flat "safe" call — two low honks.
+        this.blip(now, 240, 200, 'triangle', 0.14);
+        this.blip(now + 0.16, 200, 170, 'triangle', 0.16);
         break;
     }
   }
