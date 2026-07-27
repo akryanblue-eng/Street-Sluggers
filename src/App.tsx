@@ -12,7 +12,7 @@ const LONG_PRESS_MS = 240;
 
 export function App() {
   const game = useGameEngine();
-  const { state, swing, start, restart } = game;
+  const { state, swing, trickCatch, start, restart } = game;
 
   const pressTimer = useRef<number | null>(null);
   const pressFired = useRef(false);
@@ -28,6 +28,14 @@ export function App() {
         return;
       }
       if (e.repeat) return;
+      // While a batted ball is in flight, the action button attempts a trick catch.
+      if (state.phase === 'resolving') {
+        if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyK') {
+          e.preventDefault();
+          trickCatch();
+        }
+        return;
+      }
       if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
         swing('contact');
@@ -38,11 +46,17 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.phase, swing, start, restart]);
+  }, [state.phase, swing, trickCatch, start, restart]);
 
-  // Touch / mouse: tap = contact, long-press = power.
+  // Touch / mouse: tap = contact, long-press = power. During a batted ball,
+  // any press attempts a trick catch.
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
+      if (state.phase === 'resolving') {
+        e.preventDefault();
+        trickCatch();
+        return;
+      }
       if (state.phase !== 'pitching') return;
       e.preventDefault();
       pressFired.current = false;
@@ -51,7 +65,7 @@ export function App() {
         swing('power');
       }, LONG_PRESS_MS);
     },
-    [state.phase, swing],
+    [state.phase, swing, trickCatch],
   );
 
   const endPress = useCallback(
@@ -85,7 +99,7 @@ export function App() {
               onContextMenu={(e) => e.preventDefault()}
             />
             <div className="swing-hint">
-              <span>SWING</span>
+              <span>{state.phase === 'resolving' ? 'CATCH' : 'SWING'}</span>
             </div>
           </>
         )}

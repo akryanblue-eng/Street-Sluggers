@@ -1,6 +1,13 @@
 import { PITCH, RULES } from './constants';
+import {
+  resolveCatch,
+  resolveFielding,
+  type FieldingOutcome,
+  type FieldingPlay,
+  type TrickAttempt,
+} from './fielding';
 import { computeLaunch, type LaunchWobble } from './launch';
-import { basesFor, classifyBattedBall, labelFor } from './outcome';
+import { basesFor, labelFor } from './outcome';
 import { simulateBattedBall } from './physics';
 import { createRng, type Rng } from './rng';
 import { advanceRunners, EMPTY_BASES, type Bases } from './runners';
@@ -38,6 +45,9 @@ export class GameEngine {
   private state: GameState;
   private rng: Rng;
   private readonly inningsPerGame: number;
+  /** A batted ball whose fielding outcome is not yet applied to the score,
+   *  because its trick-catch window may still change it. */
+  private pending: { play: FieldingPlay; attempt: TrickAttempt | null } | null = null;
 
   constructor(options: EngineOptions = {}) {
     this.rng = createRng(options.seed ?? 0x51ac6);
@@ -67,10 +77,12 @@ export class GameEngine {
   reset(seed?: number): void {
     if (seed !== undefined) this.rng = createRng(seed);
     this.state = this.freshState();
+    this.pending = null;
   }
 
   startGame(): void {
     this.state = this.freshState();
+    this.pending = null;
     this.state.phase = 'menu';
   }
 
@@ -79,6 +91,7 @@ export class GameEngine {
     if (this.state.phase === 'gameover') return;
     // Small deterministic variation keeps pitches from feeling identical.
     const jitter = this.rng.range(-40, 40);
+    this.pending = null;
     this.state.phase = 'pitching';
     this.state.pitchStartMs = now;
     this.state.contactMs = PITCH.travelMs + jitter;
@@ -101,15 +114,91 @@ export class GameEngine {
     const wobble = this.rollWobble(timing.quality);
     const launch = computeLaunch(timing, swingType, wobble);
     const trajectory = simulateBattedBall(launch);
-    const outcome = classifyBattedBall(trajectory);
+    const play = resolveFielding(trajectory);
 
+    // If a fielder can make a play (routine or trick), defer scoring until the
+    // trick-catch window closes — the player may still change the result.
+    if (play.ordinaryCatch || play.trickable) {
+      const provisional = resolveCatch(play, null);
+      this.pending = { play, attempt: null };
+      this.state.phase = 'resolving';
+      this.state.lastResult = {
+        outcome: provisional.outcome,
+        label: this.fieldingLabel(provisional),
+        timing,
+        launch,
+        trajectory,
+        fielding: play,
+        pending: true,
+        caught: provisional.caught,
+        catchKind: provisional.kind,
+      };
+      return this.state.lastResult;
+    }
+
+    // Home run, foul, or a clean drop no fielder can reach: settle immediately.
     return this.applyResult({
-      outcome,
-      label: labelFor(outcome),
+      outcome: play.baseOutcome,
+      label: labelFor(play.baseOutcome),
       timing,
       launch,
       trajectory,
+      fielding: play,
     });
+  }
+
+  /**
+   * Register a player-triggered trick-catch attempt during a batted ball's
+   * flight. `pressMs` is the time of the press relative to contact.
+   */
+  registerTrickAttempt(pressMs: number): PlayResult | null {
+    if (!this.pending || this.pending.attempt !== null) return this.state.lastResult;
+    if (!this.pending.play.trickable) return this.state.lastResult;
+
+    this.pending.attempt = { pressMs };
+    const r = resolveCatch(this.pending.play, this.pending.attempt);
+    // Reflect the attempt in the display, but keep it pending until finalized.
+    this.state.lastResult = this.state.lastResult && {
+      ...this.state.lastResult,
+      outcome: r.outcome,
+      label: this.fieldingLabel(r),
+      caught: r.caught,
+      catchKind: r.kind,
+      pending: true,
+    };
+    return this.state.lastResult;
+  }
+
+  /** True while a batted ball's fielding play is awaiting resolution. */
+  hasPendingPlay(): boolean {
+    return this.pending !== null;
+  }
+
+  /** The active trick-catch window (ms relative to contact), if any. */
+  activeTrickWindow(): FieldingPlay['trickWindow'] {
+    return this.pending?.play.trickable ? this.pending.play.trickWindow : null;
+  }
+
+  /**
+   * Finalize a pending fielding play: compute the outcome from the recorded
+   * trick attempt (if any) and apply it to the score.
+   */
+  finalizePlay(): PlayResult | null {
+    if (!this.pending) return this.state.lastResult;
+    const r = resolveCatch(this.pending.play, this.pending.attempt);
+    const play = this.pending.play;
+    this.pending = null;
+    this.applyOutcome(r.outcome);
+    this.state.lastResult = {
+      ...(this.state.lastResult as PlayResult),
+      outcome: r.outcome,
+      label: this.fieldingLabel(r),
+      fielding: play,
+      caught: r.caught,
+      catchKind: r.kind,
+      pending: false,
+    };
+    return this.state.lastResult;
   }
 
   /** The pitch flew by without a swing — a called strike. */
@@ -132,12 +221,28 @@ export class GameEngine {
 
   /** Move on after a resolved play: next pitch, or game over. */
   advanceAfterResult(): void {
+    // Safety net: if a fielding play was never finalized (e.g. the driver
+    // skipped it), settle it now so the score is never silently dropped.
+    if (this.pending) this.finalizePlay();
     if (this.state.phase === 'gameover') return;
     this.state.phase = this.state.inning > this.inningsPerGame ? 'gameover' : 'pitching';
     this.state.pitchStartMs = null;
   }
 
   // --- internals -----------------------------------------------------------
+
+  private fieldingLabel(r: FieldingOutcome): string {
+    switch (r.kind) {
+      case 'trick':
+        return 'ROBBED! 🧤';
+      case 'ordinary':
+        return 'Caught — out!';
+      case 'trick-failed':
+        return `${labelFor(r.outcome)} (missed!)`;
+      default:
+        return labelFor(r.outcome);
+    }
+  }
 
   private takeResult(): PlayResult {
     return {

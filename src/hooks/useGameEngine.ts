@@ -12,6 +12,8 @@ export interface LiveView {
   pitchProgress: number;
   /** Seconds elapsed since the batted ball was launched (for flight animation). */
   ballAnimSeconds: number;
+  /** True while the player may trigger a trick catch on the ball in flight. */
+  trickPrompt: boolean;
   result: PlayResult | null;
 }
 
@@ -24,6 +26,7 @@ export interface UseGameEngine {
   start: () => void;
   restart: () => void;
   swing: (type: SwingType) => void;
+  trickCatch: () => void;
   toggleSound: () => void;
 }
 
@@ -34,10 +37,13 @@ export function useGameEngine(seed?: number): UseGameEngine {
 
   const rafRef = useRef<number | null>(null);
   const resolveStartRef = useRef<number>(0);
+  /** Real-clock time at which the current play became final (0 = not yet). */
+  const finalizeRef = useRef<number>(0);
   const liveRef = useRef<LiveView>({
     phase: 'menu',
     pitchProgress: 0,
     ballAnimSeconds: 0,
+    trickPrompt: false,
     result: null,
   });
 
@@ -46,6 +52,10 @@ export function useGameEngine(seed?: number): UseGameEngine {
   }, []);
 
   const playResultSound = useCallback((result: PlayResult) => {
+    if (result.catchKind === 'trick') {
+      sound.play('cheer');
+      return;
+    }
     switch (result.outcome) {
       case 'home_run':
         sound.play('homer');
@@ -72,8 +82,13 @@ export function useGameEngine(seed?: number): UseGameEngine {
   const enterResolving = useCallback(
     (result: PlayResult, now: number) => {
       resolveStartRef.current = now;
+      finalizeRef.current = 0;
       liveRef.current.result = result;
-      playResultSound(result);
+      liveRef.current.ballAnimSeconds = 0;
+      liveRef.current.trickPrompt = false;
+      // Only announce the outcome now if it is already final; a pending
+      // fielding play waits for its trick-catch window to close.
+      if (!result.pending) playResultSound(result);
       sync();
     },
     [playResultSound, sync],
@@ -82,7 +97,9 @@ export function useGameEngine(seed?: number): UseGameEngine {
   const throwPitch = useCallback(
     (now: number) => {
       engineRef.current.beginPitch(now);
+      finalizeRef.current = 0;
       liveRef.current.result = null;
+      liveRef.current.trickPrompt = false;
       sound.play('pitch');
       sync();
     },
@@ -103,16 +120,36 @@ export function useGameEngine(seed?: number): UseGameEngine {
           enterResolving(engine.registerTake(), now);
         }
       } else if (s.phase === 'resolving') {
-        liveRef.current.ballAnimSeconds = (now - resolveStartRef.current) / 1000;
+        const ballMs = now - resolveStartRef.current;
+        liveRef.current.ballAnimSeconds = ballMs / 1000;
         const traj = s.lastResult?.trajectory;
-        const flight = traj ? traj.hangTime * 1000 : 0;
-        if (now - resolveStartRef.current > flight + RESOLVE_TAIL_MS) {
-          engine.advanceAfterResult();
-          const after = engine.getState();
-          if (after.phase === 'pitching') {
-            throwPitch(now);
-          } else {
+        const flightMs = traj ? traj.hangTime * 1000 : 0;
+
+        if (engine.hasPendingPlay()) {
+          // A fielding play is in flight: run the trick-catch window, then settle.
+          const win = engine.activeTrickWindow();
+          liveRef.current.trickPrompt =
+            !!win && ballMs >= win.openMs && ballMs <= win.closeMs;
+          const resolvePointMs = win ? win.closeMs : flightMs;
+          if (ballMs >= resolvePointMs) {
+            const finalResult = engine.finalizePlay();
+            liveRef.current.trickPrompt = false;
+            liveRef.current.result = finalResult;
+            finalizeRef.current = now;
+            if (finalResult) playResultSound(finalResult);
             sync();
+          }
+        } else {
+          // Final outcome (immediate result, or a just-finalized fielding play).
+          if (finalizeRef.current === 0) {
+            // Immediate result: let any ball finish flying before the tail.
+            finalizeRef.current = resolveStartRef.current + flightMs;
+          }
+          if (now - finalizeRef.current >= RESOLVE_TAIL_MS) {
+            engine.advanceAfterResult();
+            const after = engine.getState();
+            if (after.phase === 'pitching') throwPitch(now);
+            else sync();
           }
         }
       }
@@ -123,7 +160,7 @@ export function useGameEngine(seed?: number): UseGameEngine {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
-  }, [enterResolving, throwPitch, sync]);
+  }, [enterResolving, throwPitch, playResultSound, sync]);
 
   const start = useCallback(() => {
     sound.resume();
@@ -149,6 +186,15 @@ export function useGameEngine(seed?: number): UseGameEngine {
     [enterResolving],
   );
 
+  const trickCatch = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine.hasPendingPlay()) return;
+    sound.resume();
+    const pressMs = (performance.now() - resolveStartRef.current);
+    const result = engine.registerTrickAttempt(pressMs);
+    if (result) liveRef.current.result = result;
+  }, []);
+
   const toggleSound = useCallback(() => {
     setSoundOn((on) => {
       const next = !on;
@@ -161,8 +207,8 @@ export function useGameEngine(seed?: number): UseGameEngine {
   const getLiveView = useCallback(() => liveRef.current, []);
 
   return useMemo(
-    () => ({ state, soundOn, getLiveView, start, restart, swing, toggleSound }),
-    [state, soundOn, getLiveView, start, restart, swing, toggleSound],
+    () => ({ state, soundOn, getLiveView, start, restart, swing, trickCatch, toggleSound }),
+    [state, soundOn, getLiveView, start, restart, swing, trickCatch, toggleSound],
   );
 }
 

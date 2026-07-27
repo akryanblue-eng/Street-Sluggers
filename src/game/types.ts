@@ -4,6 +4,10 @@
 // outcome) so it can be unit-tested deterministically with Vitest. The engine
 // wires them together with real time and randomness.
 
+// Type-only import — erased at build time, so there is no runtime import cycle
+// with fielding.ts (which imports HitOutcome / Trajectory from here).
+import type { CatchKind, FieldingPlay } from './fielding';
+
 /** Field coordinates, in arcade "feet". Home plate is the origin.
  *  x = lateral (negative → left field, positive → right field)
  *  y = depth toward the outfield
@@ -76,4 +80,12 @@ export interface PlayResult {
   timing: TimingResult;
   launch?: Launch;
   trajectory?: Trajectory;
+  /** Fielding geometry for a batted ball in play (undefined for dead balls). */
+  fielding?: FieldingPlay;
+  /** True while a fielding play is still awaiting its trick-catch window to
+   *  close; the outcome may still change until it is finalized. */
+  pending?: boolean;
+  /** Set once a fielding play resolves: whether the ball was caught, and how. */
+  caught?: boolean;
+  catchKind?: CatchKind;
 }
