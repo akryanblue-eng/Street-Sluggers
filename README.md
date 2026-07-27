@@ -12,6 +12,9 @@ This repo is a **playable vertical slice**:
 - The **outfield wall is real**: a ball over it is a home run, but a hard drive
   that strikes the wall below its top **caroms back into play** (deterministic
   restitution) and stays live.
+- A homer that barely clears can be **robbed at the wall**: an eligible
+  outfielder sprints over, plants a foot, and — on a player-timed leap — snags it
+  for an out. Mistime it and the ball's gone.
 - **Fielders** break on the ball — including the post-rebound landing spot:
   routine flies are caught for outs, gappers fall in, and a narrow,
   player-triggered **trick-catch** window can rob a hit — or, mistimed, turn a
@@ -88,9 +91,10 @@ slice leaves room for the signature mechanics to come:
 - **Wall rebounds** — ✅ `physics.ts` (SS-WALL-001): a fair ball off the wall
   caroms back into play via configurable restitution, then flows through the
   *same* fielding / trick-catch / outcome / runner systems — no second pipeline.
-- **Wall-assisted trick catch** (SS-WALL-CATCH-001, next) — a fielder plants a
-  foot on the bricks and leaps sideways to rob a home run; slots on top of the
-  existing trick-catch window now that ordinary rebounds are proven stable.
+- **Wall-assisted trick catch** — ✅ `fielding.ts` (SS-WALL-CATCH-001): a fair
+  homer barely clearing the wall becomes a pending, player-timed robbery for an
+  eligible outfielder — built on the *same* trick-catch window and pending-play
+  machinery, retaining `home_run` as the base outcome.
 - **Power swings & abilities** — swing types already flow through the physics.
 - **Environmental hazards & character abilities** — isolated in the pure core so
   they can modify launch/outcome/fielding without touching rendering.

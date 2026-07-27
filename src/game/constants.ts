@@ -79,6 +79,20 @@ export const WALL = {
   minPostImpactSpeed: 18,
 } as const;
 
+/**
+ * Wall-assisted robbery calibration (SS-WALL-CATCH-001). Starting values, not
+ * permanent canon. Movement speed and the trick-window widths are deliberately
+ * reused from FIELDING — only the wall-specific envelope lives here.
+ */
+export const WALL_CATCH = {
+  /** A homer crossing higher than this above the wall top is uncatchable, ft. */
+  maxHeightAboveWall: 7,
+  /** The fielder must plant a foot this long before the ball crosses, s. */
+  plantLeadSec: 0.18,
+  /** How late the fielder may still arrive and leap, s (beyond the plant). */
+  maxArrivalGapSec: 0.35,
+} as const;
+
 /** Game rules for the vertical slice. */
 export const RULES = {
   inningsPerGame: 3,

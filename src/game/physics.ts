@@ -1,5 +1,12 @@
 import { FIELD, PHYSICS, WALL } from './constants';
-import type { Launch, Trajectory, TrajectoryPoint, Vec3, WallImpact } from './types';
+import type {
+  Launch,
+  Trajectory,
+  TrajectoryPoint,
+  Vec3,
+  WallClearance,
+  WallImpact,
+} from './types';
 
 /** Height of the contact point off the ground, in feet. */
 const CONTACT_HEIGHT = 3;
@@ -72,6 +79,7 @@ export function simulateBattedBall(
 
   let clearedWall = false;
   let wallImpact: WallImpact | undefined;
+  let wallClearance: WallClearance | undefined;
   let wallImpacts = 0;
   let prevRadius = 0;
 
@@ -107,6 +115,19 @@ export function simulateBattedBall(
       if (impact.z > opts.wallHeight) {
         // Over the fence: a home run if fair; foul balls never clear for a homer.
         clearedWall = fair;
+        if (fair) {
+          // Retain the exact crossing so the fielding layer can attempt a
+          // wall-assisted robbery. Only fair over-the-wall balls get this.
+          const incomingSpeed = Math.hypot(vx, vy, vz);
+          wallClearance = {
+            t: impactT,
+            position: impact,
+            height: impact.z,
+            incomingVelocity: { x: vx, y: vy, z: vz },
+            incomingSpeed,
+            heightAboveWall: impact.z - opts.wallHeight,
+          };
+        }
         wallImpacts = opts.maxWallImpacts; // stop checking; ball leaves the park
       } else if (fair) {
         // Struck the wall below its top → carom back into play.
@@ -154,7 +175,7 @@ export function simulateBattedBall(
         z: 0,
       };
       points.push({ ...landing, t: t - opts.dt + opts.dt * frac });
-      return finalize(points, landing, clearedWall, opts.foulLineDeg, wallImpact);
+      return finalize(points, landing, clearedWall, opts.foulLineDeg, wallImpact, wallClearance);
     }
 
     points.push({ ...next, t });
@@ -163,7 +184,7 @@ export function simulateBattedBall(
   }
 
   // Ran out of steps (should not happen with sane inputs) — land where we are.
-  return finalize(points, pos, clearedWall, opts.foulLineDeg, wallImpact);
+  return finalize(points, pos, clearedWall, opts.foulLineDeg, wallImpact, wallClearance);
 }
 
 function finalize(
@@ -172,6 +193,7 @@ function finalize(
   clearedWall: boolean,
   foulLineDeg: number,
   wallImpact: WallImpact | undefined,
+  wallClearance: WallClearance | undefined,
 ): Trajectory {
   const distance = Math.hypot(landing.x, landing.y);
   const azimuthDeg = Math.abs(Math.atan2(landing.x, Math.max(landing.y, 1e-6)) / DEG);
@@ -185,5 +207,6 @@ function finalize(
     clearedWall: clearedWall && !foul,
     foul,
     wallImpact,
+    wallClearance,
   };
 }

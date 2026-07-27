@@ -10,7 +10,9 @@ export type SoundName =
   | 'whiff'
   | 'out'
   | 'cheer'
-  | 'wall';
+  | 'wall'
+  | 'plant'
+  | 'glove';
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
@@ -72,6 +74,16 @@ class SoundEngine {
         // A dull clang off the fence: low thump + a short metallic noise burst.
         this.blip(now, 150, 60, 'sawtooth', 0.14);
         this.noise(now, 0.12, 0.22);
+        break;
+      case 'plant':
+        // Sneaker scuff + shove off the wall.
+        this.noise(now, 0.1, 0.18);
+        this.blip(now, 120, 80, 'triangle', 0.1);
+        break;
+      case 'glove':
+        // Sharp leather pop of the snag.
+        this.blip(now, 900, 240, 'square', 0.08);
+        this.noise(now + 0.01, 0.05, 0.16);
         break;
     }
   }

@@ -233,6 +233,10 @@ export class GameEngine {
 
   private fieldingLabel(r: FieldingOutcome): string {
     switch (r.kind) {
+      case 'wall-trick':
+        return 'ROBBED AT THE WALL! 🧤';
+      case 'wall-trick-failed':
+        return 'JUST MISSED — HOME RUN!';
       case 'trick':
         return 'ROBBED! 🧤';
       case 'ordinary':
