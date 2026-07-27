@@ -9,7 +9,8 @@ export type SoundName =
   | 'homer'
   | 'whiff'
   | 'out'
-  | 'cheer';
+  | 'cheer'
+  | 'wall';
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
@@ -66,6 +67,11 @@ class SoundEngine {
         break;
       case 'cheer':
         this.noise(now, 0.6, 0.25);
+        break;
+      case 'wall':
+        // A dull clang off the fence: low thump + a short metallic noise burst.
+        this.blip(now, 150, 60, 'sawtooth', 0.14);
+        this.noise(now, 0.12, 0.22);
         break;
     }
   }

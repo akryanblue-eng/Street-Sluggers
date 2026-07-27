@@ -7,6 +7,7 @@
 import { FIELD } from '../game/constants';
 import { DEFAULT_FIELDERS, type FieldingPlay } from '../game/fielding';
 import type { GameState } from '../game/engine';
+import type { WallImpact } from '../game/types';
 import type { LiveView } from '../hooks/useGameEngine';
 
 const COLORS = {
@@ -85,8 +86,44 @@ export function drawField(
     drawPitch(ctx, proj, view.pitchProgress);
   } else if (view.phase === 'resolving') {
     if (view.result?.trajectory) drawBattedBall(ctx, proj, view);
+    const wallImpact = view.result?.trajectory?.wallImpact;
+    if (wallImpact) drawWallImpact(ctx, proj, wallImpact, view.ballAnimSeconds);
     if (activePlay) drawFieldingPlay(ctx, proj, activePlay, view);
   }
+}
+
+/** A procedural flash + expanding ring where the ball caroms off the wall.
+ *  The batted-ball trail already renders the incoming and reflected paths. */
+function drawWallImpact(
+  ctx: CanvasRenderingContext2D,
+  proj: Projection,
+  impact: WallImpact,
+  ballAnimSeconds: number,
+) {
+  const age = ballAnimSeconds - impact.t;
+  if (age < 0 || age > 0.5) return; // only around the moment of contact
+
+  const p = proj.toScreen(impact.position.x, impact.position.y, impact.position.z);
+  const fade = 1 - age / 0.5;
+
+  // Expanding shock ring.
+  ctx.save();
+  ctx.globalAlpha = fade;
+  ctx.beginPath();
+  ctx.arc(p.sx, p.sy, 5 + age * 90, 0, Math.PI * 2);
+  ctx.strokeStyle = impact.deadened ? '#c7ccd1' : '#ffd24a';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Bright core flash for the first instant.
+  if (age < 0.16) {
+    ctx.globalAlpha = 1 - age / 0.16;
+    ctx.beginPath();
+    ctx.arc(p.sx, p.sy, 7, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff6d5';
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number) {
