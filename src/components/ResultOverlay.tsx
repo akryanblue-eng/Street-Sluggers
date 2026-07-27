@@ -20,16 +20,20 @@ export function ResultOverlay({ result }: Props) {
   // Hold the announcement until a fielding play has actually resolved.
   if (!result || result.pending) return null;
 
-  const tone = TONE[result.outcome] ?? 'flash-neutral';
+  // A robbery at the wall is a highlight, not a routine out — flash it gold.
+  const tone =
+    result.catchKind === 'wall-trick' ? 'flash-homer' : TONE[result.outcome] ?? 'flash-neutral';
   const distance = result.trajectory ? Math.round(result.trajectory.distance) : null;
+  const isRobbery = result.catchKind === 'wall-trick';
 
   return (
     <div className={`result-flash ${tone}`} key={`${result.label}-${result.timing.errorMs}`}>
       <div className="result-label">{result.label}</div>
-      {result.timing.band === 'perfect' && result.timing.contact && (
+      {isRobbery && <div className="result-sub">HOME-RUN ROBBERY</div>}
+      {!isRobbery && result.timing.band === 'perfect' && result.timing.contact && (
         <div className="result-sub">PERFECT TIMING</div>
       )}
-      {distance !== null && result.outcome !== 'foul' && (
+      {distance !== null && result.outcome !== 'foul' && !isRobbery && (
         <div className="result-distance">{distance} ft</div>
       )}
     </div>

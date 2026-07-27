@@ -7,9 +7,11 @@
 // trick-catch timing window. No RNG, no clock: identical trajectories always
 // produce identical assignments and outcomes.
 //
-// Reserved for a later slice (kept out on purpose): throwing, roster/character
-// selection, and the wall-assisted trick catch that robs a home run.
+// SS-WALL-CATCH-001 extends this same resolver with a wall-assisted home-run
+// robbery — an eligible outfielder plants a foot on the wall and leaps to rob a
+// ball barely clearing it — rather than a parallel wall-play resolver.
 
+import { WALL_CATCH } from './constants';
 import { classifyBattedBall, type OutcomeConfig } from './outcome';
 import type { HitOutcome, Trajectory } from './types';
 
@@ -19,6 +21,8 @@ export interface Fielder {
   /** Home position on the field, in feet (x lateral, y depth). */
   x: number;
   y: number;
+  /** May attempt a wall-assisted robbery (default outfielders LF/CF/RF only). */
+  wallEligible?: boolean;
 }
 
 /** A fixed defensive alignment. Positions are arcade-spaced, not to scale. */
@@ -29,9 +33,9 @@ export const DEFAULT_FIELDERS: readonly Fielder[] = [
   { id: '2B', label: 'Second', x: 34, y: 138 },
   { id: 'SS', label: 'Short', x: -34, y: 138 },
   { id: '3B', label: 'Third', x: -58, y: 84 },
-  { id: 'LF', label: 'Left', x: -168, y: 250 },
-  { id: 'CF', label: 'Center', x: 0, y: 312 },
-  { id: 'RF', label: 'Right', x: 168, y: 250 },
+  { id: 'LF', label: 'Left', x: -168, y: 250, wallEligible: true },
+  { id: 'CF', label: 'Center', x: 0, y: 312, wallEligible: true },
+  { id: 'RF', label: 'Right', x: 168, y: 250, wallEligible: true },
 ];
 
 export const FIELDING = {
@@ -49,7 +53,16 @@ export const FIELDING = {
   trickWindowHalfMs: 260,
 } as const;
 
-export type CatchKind = 'ordinary' | 'trick' | 'trick-failed' | 'none';
+export type CatchKind =
+  | 'ordinary'
+  | 'trick'
+  | 'trick-failed'
+  | 'wall-trick'
+  | 'wall-trick-failed'
+  | 'none';
+
+/** Whether a play is fielded off the landing point or up against the wall. */
+export type FieldingPlayType = 'landing' | 'wall-assist';
 
 export interface TrickWindow {
   /** All times are ms relative to contact (ball launch at t = 0). */
@@ -61,9 +74,11 @@ export interface TrickWindow {
 }
 
 export interface FieldingPlay {
+  /** Whether the play is made off the landing spot or up against the wall. */
+  type: FieldingPlayType;
   /** The nearest eligible fielder assigned to the ball. */
   fielder: Fielder;
-  /** Where the play happens (the ball's landing spot), in feet. */
+  /** Where the play happens: the landing spot, or the wall-crossing point. */
   playPoint: { x: number; y: number };
   /** Straight-line interception route the fielder runs. */
   route: { from: { x: number; y: number }; to: { x: number; y: number } };
@@ -95,9 +110,16 @@ export interface FieldingOutcome {
   fielderId: string;
 }
 
+export interface WallCatchConfig {
+  maxHeightAboveWall: number;
+  plantLeadSec: number;
+  maxArrivalGapSec: number;
+}
+
 export interface FieldingConfig {
   fielders?: readonly Fielder[];
   outcome?: Partial<OutcomeConfig>;
+  wallCatch?: Partial<WallCatchConfig>;
 }
 
 /**
@@ -112,6 +134,11 @@ export function resolveFielding(
   const baseOutcome = classifyBattedBall(trajectory, config.outcome);
   const playPoint = { x: trajectory.landing.x, y: trajectory.landing.y };
   const timeAvailable = trajectory.hangTime;
+
+  // A fair ball barely clearing the wall can be robbed by an eligible
+  // outfielder who reaches the wall in time — same pending trick machinery.
+  const wallAssist = tryWallAssist(trajectory, fielders, baseOutcome, config.wallCatch);
+  if (wallAssist) return wallAssist;
 
   // A ball over the wall or in foul ground is not a fieldable play here.
   const fieldable =
@@ -144,6 +171,7 @@ export function resolveFielding(
     : null;
 
   return {
+    type: 'landing',
     fielder: best,
     playPoint,
     route: { from: { x: best.x, y: best.y }, to: playPoint },
@@ -154,6 +182,70 @@ export function resolveFielding(
     trickWindow,
     baseOutcome,
     fieldable,
+  };
+}
+
+/**
+ * If the trajectory is a fair home run barely clearing the wall and an eligible
+ * outfielder can plant a foot on the wall in time, build a wall-assist play
+ * (a pending, player-triggered robbery). Otherwise return null and let the ball
+ * stand as an immediate home run.
+ */
+function tryWallAssist(
+  trajectory: Trajectory,
+  fielders: readonly Fielder[],
+  baseOutcome: HitOutcome,
+  overrides: Partial<WallCatchConfig> = {},
+): FieldingPlay | null {
+  const wc = trajectory.wallClearance;
+  // Must be a fair, would-be home run whose crossing we retained.
+  if (!wc || trajectory.foul || !trajectory.clearedWall || baseOutcome !== 'home_run') {
+    return null;
+  }
+
+  const cfg: WallCatchConfig = { ...WALL_CATCH, ...overrides };
+  // Too high over the wall to rob.
+  if (wc.heightAboveWall > cfg.maxHeightAboveWall) return null;
+
+  const playPoint = { x: wc.position.x, y: wc.position.y };
+  // The fielder must be at the wall base a beat before the ball crosses.
+  const plantDeadline = wc.t - cfg.plantLeadSec;
+
+  let best: Fielder | null = null;
+  let bestGap = Number.POSITIVE_INFINITY;
+  for (const f of fielders) {
+    if (!f.wallEligible) continue;
+    const d = Math.hypot(playPoint.x - f.x, playPoint.y - f.y);
+    const travel = Math.max(0, d - FIELDING.catchRadius) / FIELDING.speed;
+    const gap = FIELDING.reactionSec + travel - plantDeadline;
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = f;
+    }
+  }
+
+  // No eligible fielder can reach the wall in time.
+  if (!best || bestGap > cfg.maxArrivalGapSec) return null;
+
+  // The catch happens as the ball crosses the wall — plant, leap, snap.
+  const centerMs = wc.t * 1000;
+  return {
+    type: 'wall-assist',
+    fielder: best,
+    playPoint,
+    route: { from: { x: best.x, y: best.y }, to: playPoint },
+    catchRadius: FIELDING.catchRadius,
+    arrivalGapSec: bestGap,
+    ordinaryCatch: false,
+    trickable: true,
+    trickWindow: {
+      openMs: centerMs - FIELDING.trickWindowHalfMs,
+      centerMs,
+      closeMs: centerMs + FIELDING.trickWindowHalfMs,
+      successHalfMs: FIELDING.trickSuccessHalfMs,
+    },
+    baseOutcome: 'home_run',
+    fieldable: false,
   };
 }
 
@@ -172,6 +264,19 @@ export function resolveCatch(
   attempt: TrickAttempt | null,
 ): FieldingOutcome {
   const fielderId = play.fielder.id;
+
+  // Wall-assisted robbery: rob a would-be home run, or let it stand. A failed
+  // or skipped attempt never changes the home run — the ball already left.
+  if (play.type === 'wall-assist') {
+    if (attempt === null || !play.trickWindow) {
+      return { outcome: 'home_run', caught: false, kind: 'none', fielderId };
+    }
+    const err = Math.abs(attempt.pressMs - play.trickWindow.centerMs);
+    if (err <= play.trickWindow.successHalfMs) {
+      return { outcome: 'out', caught: true, kind: 'wall-trick', fielderId };
+    }
+    return { outcome: 'home_run', caught: false, kind: 'wall-trick-failed', fielderId };
+  }
 
   if (!play.fieldable) {
     return { outcome: play.baseOutcome, caught: false, kind: 'none', fielderId };

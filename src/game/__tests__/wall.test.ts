@@ -92,3 +92,48 @@ describe('wall rebound feeds the existing fielding pipeline (gate 4)', () => {
     expect(['out', 'single', 'double', 'triple']).toContain(dropped.outcome);
   });
 });
+
+describe('wall clearance metadata (SS-WALL-CATCH-001)', () => {
+  // A fair ball that just clears the wall on the way down.
+  const GRAZING = launch(160, 19);
+  // A no-doubt shot well over the fence.
+  const TOWERING = launch(200, 27);
+
+  it('records the crossing for a fair home run (deterministic)', () => {
+    const a = simulateBattedBall(GRAZING);
+    const b = simulateBattedBall(GRAZING);
+    expect(a.clearedWall).toBe(true);
+    expect(a.wallClearance).toBeDefined();
+    expect(a.wallClearance).toEqual(b.wallClearance);
+  });
+
+  it('captures crossing height, velocity, and height above the wall', () => {
+    const wc = simulateBattedBall(GRAZING).wallClearance!;
+    expect(wc.height).toBeGreaterThan(FIELD.wallHeight);
+    expect(wc.heightAboveWall).toBeCloseTo(wc.height - FIELD.wallHeight, 6);
+    expect(wc.heightAboveWall).toBeGreaterThan(0);
+    expect(wc.incomingSpeed).toBeGreaterThan(0);
+    expect(Math.hypot(wc.incomingVelocity.x, wc.incomingVelocity.y, wc.incomingVelocity.z))
+      .toBeCloseTo(wc.incomingSpeed, 6);
+    // Crossing point sits on the wall radius.
+    expect(Math.hypot(wc.position.x, wc.position.y)).toBeCloseTo(FIELD.wallRadius, 0);
+  });
+
+  it('a towering homer clears far above the wall', () => {
+    const wc = simulateBattedBall(TOWERING).wallClearance!;
+    expect(wc.heightAboveWall).toBeGreaterThan(7);
+  });
+
+  it('does not record a clearance for a below-wall rebound', () => {
+    const t = simulateBattedBall(REBOUND);
+    expect(t.wallImpact).toBeDefined();
+    expect(t.wallClearance).toBeUndefined();
+  });
+
+  it('does not record a clearance for a foul ball (gate 8)', () => {
+    const t = simulateBattedBall(launch(200, 30, 60));
+    expect(t.foul).toBe(true);
+    expect(t.clearedWall).toBe(false);
+    expect(t.wallClearance).toBeUndefined();
+  });
+});

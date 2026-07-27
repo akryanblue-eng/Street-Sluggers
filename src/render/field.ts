@@ -66,18 +66,25 @@ export function drawField(
 ): void {
   const proj = makeProjection(w, h);
 
+  // A fielder actively making a play is drawn in motion; hold him out of the
+  // static defensive alignment so he isn't ghosted at his home spot.
+  const play = view.result?.fielding;
+  const activePlay =
+    view.phase === 'resolving' && play && (play.fieldable || play.type === 'wall-assist')
+      ? play
+      : null;
+
+  // A short camera bump when the fielder crashes into the wall on a robbery.
+  const bump = activePlay?.type === 'wall-assist' ? cameraBump(activePlay, view) : null;
+  ctx.save();
+  if (bump) ctx.translate(bump.x, bump.y);
+
   drawBackground(ctx, w, h);
   drawGrass(ctx, w, h, proj);
   drawFoulLines(ctx, proj);
   drawWall(ctx, proj);
   drawInfield(ctx, proj);
 
-  // A fielder actively making a play is drawn in motion; hold him out of the
-  // static defensive alignment so he isn't ghosted at his home spot.
-  const activePlay =
-    view.phase === 'resolving' && view.result?.fielding?.fieldable
-      ? view.result.fielding
-      : null;
   drawPlayers(ctx, proj, activePlay?.fielder.id);
   drawRunners(ctx, proj, state);
 
@@ -88,8 +95,21 @@ export function drawField(
     if (view.result?.trajectory) drawBattedBall(ctx, proj, view);
     const wallImpact = view.result?.trajectory?.wallImpact;
     if (wallImpact) drawWallImpact(ctx, proj, wallImpact, view.ballAnimSeconds);
-    if (activePlay) drawFieldingPlay(ctx, proj, activePlay, view);
+    if (activePlay?.type === 'wall-assist') drawWallAssist(ctx, proj, activePlay, view);
+    else if (activePlay) drawFieldingPlay(ctx, proj, activePlay, view);
   }
+
+  ctx.restore();
+}
+
+/** Deterministic decaying screen shake around the moment of a wall robbery. */
+function cameraBump(play: FieldingPlay, view: LiveView): { x: number; y: number } | null {
+  if (!play.trickWindow) return null;
+  const dt = view.ballAnimSeconds * 1000 - play.trickWindow.centerMs;
+  if (dt < 0 || dt > 260) return null;
+  const decay = 1 - dt / 260;
+  const mag = 4 * decay;
+  return { x: Math.sin(dt * 0.09) * mag, y: Math.cos(dt * 0.11) * mag };
 }
 
 /** A procedural flash + expanding ring where the ball caroms off the wall.
@@ -333,6 +353,85 @@ function drawFieldingPlay(
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/** The wall-assisted robbery: the outfielder sprints to the fence, plants a
+ *  foot, and leaps to snag a would-be homer as it crosses. All procedural. */
+function drawWallAssist(
+  ctx: CanvasRenderingContext2D,
+  proj: Projection,
+  play: FieldingPlay,
+  view: LiveView,
+) {
+  const win = play.trickWindow;
+  if (!win) return;
+  const ballMs = view.ballAnimSeconds * 1000;
+  const { x: px, y: py } = play.playPoint;
+  const { from } = play.route;
+
+  // Sprint to the base of the wall, arriving by the plant (window open).
+  const runT = clamp01(win.openMs > 0 ? ballMs / win.openMs : 1);
+  const rx = from.x + (px - from.x) * runT;
+  const ry = from.y + (py - from.y) * runT;
+
+  // After arrival, plant and leap up the wall (up then down).
+  const leap = clamp01((ballMs - win.openMs) / Math.max(1, win.closeMs - win.openMs));
+  const z = 18 * Math.sin(leap * Math.PI);
+  const atWall = runT >= 1;
+  const fxy = atWall ? { x: px, y: py } : { x: rx, y: ry };
+
+  // Ground shadow at the wall base.
+  const ground = proj.toScreen(fxy.x, fxy.y, 0);
+  ctx.beginPath();
+  ctx.ellipse(ground.sx, ground.sy, 8, 3, 0, 0, Math.PI * 2);
+  ctx.fillStyle = COLORS.shadow;
+  ctx.fill();
+
+  // Brick dust kicking off the wall as the sneaker plants.
+  if (atWall && leap > 0 && leap < 0.6) {
+    const fade = 1 - leap / 0.6;
+    ctx.save();
+    ctx.globalAlpha = 0.5 * fade;
+    ctx.fillStyle = '#c98a5a';
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI - Math.PI / 2;
+      const r = 6 + leap * 26;
+      ctx.beginPath();
+      ctx.arc(ground.sx + Math.cos(a) * r, ground.sy - Math.abs(Math.sin(a)) * r * 0.6, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // The leaping fielder.
+  const air = proj.toScreen(fxy.x, fxy.y, z);
+  drawBlob(ctx, air.sx, air.sy, 10 * air.scale + 2, COLORS.fielderActive, COLORS.fielderOutline);
+
+  // Glove reaching above the top of the wall at the apex of the leap.
+  const glove = proj.toScreen(fxy.x, fxy.y, z + 6);
+  ctx.beginPath();
+  ctx.arc(glove.sx, glove.sy, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#8a5a2b';
+  ctx.fill();
+
+  // Timing ring at the wall-clearance height, closing on the crossing moment.
+  const target = proj.toScreen(px, py, FIELD.wallHeight);
+  const remaining = Math.abs(win.centerMs - ballMs);
+  const hot = remaining <= win.successHalfMs;
+  ctx.beginPath();
+  ctx.arc(target.sx, target.sy, 12 + Math.min(64, remaining / 6), 0, Math.PI * 2);
+  ctx.strokeStyle = hot ? COLORS.reticleHot : COLORS.reticle;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  if (view.trickPrompt) {
+    ctx.save();
+    ctx.font = '800 16px "Trebuchet MS", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = COLORS.reticleHot;
+    ctx.fillText('ROB IT!', target.sx, target.sy - 22);
+    ctx.restore();
+  }
 }
 
 function drawBlob(

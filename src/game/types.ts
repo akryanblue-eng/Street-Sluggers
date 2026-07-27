@@ -68,6 +68,23 @@ export interface WallImpact {
   deadened: boolean;
 }
 
+/** Record of a fair ball crossing above the wall (SS-WALL-CATCH-001), retained
+ *  so the fielding layer can attempt a wall-assisted home-run robbery. */
+export interface WallClearance {
+  /** Time the ball crossed the wall plane, seconds since contact. */
+  t: number;
+  /** Interpolated crossing point (z is the height it crossed at). */
+  position: Vec3;
+  /** Height at which the ball crossed, in feet (== position.z). */
+  height: number;
+  /** Ball velocity at the crossing. */
+  incomingVelocity: Vec3;
+  /** Ball speed at the crossing, ft/s. */
+  incomingSpeed: number;
+  /** How far above the wall top the ball crossed, in feet. */
+  heightAboveWall: number;
+}
+
 export interface Trajectory {
   points: TrajectoryPoint[];
   /** Landing spot on the ground (z ≈ 0). */
@@ -82,6 +99,8 @@ export interface Trajectory {
   foul: boolean;
   /** Set when the ball caroms off the wall back into play (undefined if not). */
   wallImpact?: WallImpact;
+  /** Set when a fair ball crosses above the wall (a would-be home run). */
+  wallClearance?: WallClearance;
 }
 
 export type HitOutcome =

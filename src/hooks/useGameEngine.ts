@@ -41,6 +41,8 @@ export function useGameEngine(seed?: number): UseGameEngine {
   const finalizeRef = useRef<number>(0);
   /** Guards the one-shot wall-impact clang per batted ball. */
   const wallSoundRef = useRef<boolean>(false);
+  /** Guards the one-shot sneaker-plant scuff on a wall-assist play. */
+  const plantSoundRef = useRef<boolean>(false);
   const liveRef = useRef<LiveView>({
     phase: 'menu',
     pitchProgress: 0,
@@ -54,6 +56,11 @@ export function useGameEngine(seed?: number): UseGameEngine {
   }, []);
 
   const playResultSound = useCallback((result: PlayResult) => {
+    if (result.catchKind === 'wall-trick') {
+      sound.play('glove');
+      sound.play('cheer');
+      return;
+    }
     if (result.catchKind === 'trick') {
       sound.play('cheer');
       return;
@@ -86,6 +93,7 @@ export function useGameEngine(seed?: number): UseGameEngine {
       resolveStartRef.current = now;
       finalizeRef.current = 0;
       wallSoundRef.current = false;
+      plantSoundRef.current = false;
       liveRef.current.result = result;
       liveRef.current.ballAnimSeconds = 0;
       liveRef.current.trickPrompt = false;
@@ -102,6 +110,7 @@ export function useGameEngine(seed?: number): UseGameEngine {
       engineRef.current.beginPitch(now);
       finalizeRef.current = 0;
       wallSoundRef.current = false;
+      plantSoundRef.current = false;
       liveRef.current.result = null;
       liveRef.current.trickPrompt = false;
       sound.play('pitch');
@@ -133,6 +142,18 @@ export function useGameEngine(seed?: number): UseGameEngine {
         if (traj?.wallImpact && !wallSoundRef.current && ballMs >= traj.wallImpact.t * 1000) {
           wallSoundRef.current = true;
           sound.play('wall');
+        }
+
+        // Sneaker scuff as the fielder plants against the wall (wall-assist).
+        const win = s.lastResult?.fielding;
+        if (
+          win?.type === 'wall-assist' &&
+          win.trickWindow &&
+          !plantSoundRef.current &&
+          ballMs >= win.trickWindow.openMs
+        ) {
+          plantSoundRef.current = true;
+          sound.play('plant');
         }
 
         if (engine.hasPendingPlay()) {
