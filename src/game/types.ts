@@ -50,6 +50,24 @@ export interface TrajectoryPoint extends Vec3 {
   t: number;
 }
 
+/** Explicit record of a ball caroming off the outfield wall (SS-WALL-001). */
+export interface WallImpact {
+  /** Time of impact, seconds since contact. */
+  t: number;
+  /** Impact point on the wall (z is the height it struck). */
+  position: Vec3;
+  /** Height up the wall that the ball struck, in feet. */
+  height: number;
+  /** Ball speed just before impact, ft/s. */
+  incomingSpeed: number;
+  /** Ball speed just after the bounce, ft/s. */
+  reboundSpeed: number;
+  /** Outward horizontal wall normal at the impact point (unit vector). */
+  normal: { x: number; y: number };
+  /** True when the rebound speed fell below the minimum lively threshold. */
+  deadened: boolean;
+}
+
 export interface Trajectory {
   points: TrajectoryPoint[];
   /** Landing spot on the ground (z ≈ 0). */
@@ -62,6 +80,8 @@ export interface Trajectory {
   clearedWall: boolean;
   /** True if the batted ball ended up in foul territory. */
   foul: boolean;
+  /** Set when the ball caroms off the wall back into play (undefined if not). */
+  wallImpact?: WallImpact;
 }
 
 export type HitOutcome =

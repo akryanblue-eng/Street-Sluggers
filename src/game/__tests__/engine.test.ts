@@ -141,3 +141,45 @@ describe('GameEngine — fielding integration', () => {
     expect(result?.outcome).toBe(base);
   });
 });
+
+describe('GameEngine — wall rebound integration', () => {
+  /** Scan seeds and swing timings for a batted ball that caroms off the wall
+   *  and is handed to the fielding system (a pending play). */
+  function findWallPlay(): { engine: GameEngine } | null {
+    for (let seed = 1; seed <= 40; seed++) {
+      for (let off = -90; off <= 70; off += 1) {
+        const engine = new GameEngine({ seed });
+        engine.startGame();
+        engine.beginPitch(0);
+        const contactMs = engine.getState().contactMs;
+        const r = engine.registerSwing(contactMs + off, 'contact');
+        if (r.trajectory?.wallImpact && r.pending) return { engine };
+      }
+    }
+    return null;
+  }
+
+  it('a wall rebound flows through fielding and resolves exactly once (gates 4, 5)', () => {
+    const found = findWallPlay();
+    expect(found).not.toBeNull();
+    const { engine } = found!;
+
+    const r = engine.getState().lastResult!;
+    expect(r.trajectory!.wallImpact).toBeDefined();
+    expect(r.fielding).toBeDefined(); // used the existing fielding pipeline
+    expect(engine.hasPendingPlay()).toBe(true);
+
+    const tally = () => {
+      const s = engine.getState();
+      return s.runs + s.outs + s.bases.filter(Boolean).length;
+    };
+
+    engine.finalizePlay();
+    const afterOnce = tally();
+    expect(engine.getState().lastResult?.pending).toBe(false);
+
+    // A second finalize must not double-apply the play.
+    engine.finalizePlay();
+    expect(tally()).toBe(afterOnce);
+  });
+});

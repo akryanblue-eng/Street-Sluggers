@@ -8,11 +8,14 @@ and physics).
 This repo is a **playable vertical slice**:
 
 - A pitcher throws; you time a swing.
-- The ball launches with a real trajectory (gravity + drag) and collision with
-  the outfield wall.
-- **Fielders** break on the ball: routine flies are caught for outs, gappers
-  fall in, and a narrow, player-triggered **trick-catch** window can rob a hit —
-  or, mistimed, turn a routine out into an extra-base gift.
+- The ball launches with a real trajectory (gravity + drag).
+- The **outfield wall is real**: a ball over it is a home run, but a hard drive
+  that strikes the wall below its top **caroms back into play** (deterministic
+  restitution) and stays live.
+- **Fielders** break on the ball — including the post-rebound landing spot:
+  routine flies are caught for outs, gappers fall in, and a narrow,
+  player-triggered **trick-catch** window can rob a hit — or, mistimed, turn a
+  routine out into an extra-base gift.
 - The play resolves as **strike, out, single, double, triple, or home run**.
 - Score / inning / outs / strikes HUD, base runners, a big arcade result
   call-out, and a restart flow.
@@ -59,7 +62,7 @@ src/
   game/            # framework-free gameplay core (pure + testable)
     timing.ts      #   swing timing → contact quality
     launch.ts      #   contact quality → launch conditions
-    physics.ts     #   projectile trajectory + wall collision
+    physics.ts     #   projectile trajectory + deterministic wall rebound
     outcome.ts     #   trajectory → hit outcome
     fielding.ts    #   trajectory → fielder assignment, catches, trick window
     runners.ts     #   base-runner advancement
@@ -80,12 +83,14 @@ seedable RNG, and React only ever reads snapshots.
 Street Sluggers should feel like **exaggerated arcade street baseball**. Each
 slice leaves room for the signature mechanics to come:
 
-- **Trick catches** — ✅ landed in `fielding.ts` (this slice): fielder pursuit,
-  ordinary catches, and a player-timed diving-catch window.
-- **Wall rebounds** — next: the outfield wall is drawn as a segmentable barrier,
-  ready to feed the same interception/catch system rather than a separate one.
-- **Wall-assisted trick catch** (wildcard) — a fielder plants a foot on the
-  bricks and leaps sideways to rob a home run; slots on top of the trick window.
+- **Trick catches** — ✅ `fielding.ts`: fielder pursuit, ordinary catches, and a
+  player-timed diving-catch window.
+- **Wall rebounds** — ✅ `physics.ts` (SS-WALL-001): a fair ball off the wall
+  caroms back into play via configurable restitution, then flows through the
+  *same* fielding / trick-catch / outcome / runner systems — no second pipeline.
+- **Wall-assisted trick catch** (SS-WALL-CATCH-001, next) — a fielder plants a
+  foot on the bricks and leaps sideways to rob a home run; slots on top of the
+  existing trick-catch window now that ordinary rebounds are proven stable.
 - **Power swings & abilities** — swing types already flow through the physics.
 - **Environmental hazards & character abilities** — isolated in the pure core so
   they can modify launch/outcome/fielding without touching rendering.

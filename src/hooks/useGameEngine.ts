@@ -39,6 +39,8 @@ export function useGameEngine(seed?: number): UseGameEngine {
   const resolveStartRef = useRef<number>(0);
   /** Real-clock time at which the current play became final (0 = not yet). */
   const finalizeRef = useRef<number>(0);
+  /** Guards the one-shot wall-impact clang per batted ball. */
+  const wallSoundRef = useRef<boolean>(false);
   const liveRef = useRef<LiveView>({
     phase: 'menu',
     pitchProgress: 0,
@@ -83,6 +85,7 @@ export function useGameEngine(seed?: number): UseGameEngine {
     (result: PlayResult, now: number) => {
       resolveStartRef.current = now;
       finalizeRef.current = 0;
+      wallSoundRef.current = false;
       liveRef.current.result = result;
       liveRef.current.ballAnimSeconds = 0;
       liveRef.current.trickPrompt = false;
@@ -98,6 +101,7 @@ export function useGameEngine(seed?: number): UseGameEngine {
     (now: number) => {
       engineRef.current.beginPitch(now);
       finalizeRef.current = 0;
+      wallSoundRef.current = false;
       liveRef.current.result = null;
       liveRef.current.trickPrompt = false;
       sound.play('pitch');
@@ -124,6 +128,12 @@ export function useGameEngine(seed?: number): UseGameEngine {
         liveRef.current.ballAnimSeconds = ballMs / 1000;
         const traj = s.lastResult?.trajectory;
         const flightMs = traj ? traj.hangTime * 1000 : 0;
+
+        // One-shot clang as the ball reaches the wall.
+        if (traj?.wallImpact && !wallSoundRef.current && ballMs >= traj.wallImpact.t * 1000) {
+          wallSoundRef.current = true;
+          sound.play('wall');
+        }
 
         if (engine.hasPendingPlay()) {
           // A fielding play is in flight: run the trick-catch window, then settle.

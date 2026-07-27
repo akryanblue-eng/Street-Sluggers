@@ -56,6 +56,29 @@ export const PHYSICS = {
   maxSteps: 2000,
 } as const;
 
+/**
+ * Wall-rebound calibration (SS-WALL-001). Starting values, not game canon —
+ * kept explicit and configurable rather than buried as magic numbers.
+ */
+export const WALL = {
+  /** How much of the inward (normal) speed survives the bounce, reversed. */
+  normalRestitution: 0.55,
+  /** How much sideways-along-the-wall (tangential) speed survives. */
+  tangentialRetention: 0.82,
+  /** How much vertical speed survives. */
+  verticalRetention: 0.72,
+  /** Exactly one rebound this slice — no bounce-loop chaos. */
+  maxImpacts: 1,
+  /**
+   * Below this post-impact speed (ft/s) the ball has essentially died against
+   * the bricks: it dribbles down at the base of the wall instead of caroming
+   * back into play. The rebound still simulates; it is just flagged `deadened`
+   * so callers can tell a lively carom from a dead thud. Test-covered on both
+   * sides of the threshold.
+   */
+  minPostImpactSpeed: 18,
+} as const;
+
 /** Game rules for the vertical slice. */
 export const RULES = {
   inningsPerGame: 3,
