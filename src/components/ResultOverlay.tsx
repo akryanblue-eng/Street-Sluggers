@@ -17,7 +17,8 @@ const TONE: Record<string, string> = {
 /** The big arcade call-out after each play. Keyed by play so it re-triggers the
  *  pop animation every time. */
 export function ResultOverlay({ result }: Props) {
-  if (!result) return null;
+  // Hold the announcement until a fielding play has actually resolved.
+  if (!result || result.pending) return null;
 
   const tone = TONE[result.outcome] ?? 'flash-neutral';
   const distance = result.trajectory ? Math.round(result.trajectory.distance) : null;

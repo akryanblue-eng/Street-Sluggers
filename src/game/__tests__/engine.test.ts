@@ -77,3 +77,67 @@ describe('GameEngine', () => {
     expect(ra.trajectory?.distance).toBeCloseTo(rb.trajectory?.distance ?? -1, 8);
   });
 });
+
+/** Swing across a range of timings on a fresh engine until we find a batted
+ *  ball whose fielding play matches `pick`. Keeps the fielding integration
+ *  tests independent of exact pitch jitter. */
+function findPlay(
+  seed: number,
+  pick: (r: import('../types').PlayResult) => boolean,
+): { engine: GameEngine; contactMs: number } | null {
+  for (let off = -150; off <= 150; off += 3) {
+    const engine = new GameEngine({ seed });
+    engine.startGame();
+    engine.beginPitch(0);
+    const contactMs = engine.getState().contactMs;
+    const r = engine.registerSwing(contactMs + off, 'contact');
+    if (r.pending && r.fielding && pick(r)) return { engine, contactMs };
+  }
+  return null;
+}
+
+describe('GameEngine — fielding integration', () => {
+  it('defers a fielding play and does not touch the score until finalized', () => {
+    const found = findPlay(5, (r) => !!r.fielding);
+    expect(found).not.toBeNull();
+    const { engine } = found!;
+    expect(engine.hasPendingPlay()).toBe(true);
+    // Score untouched while the play is pending.
+    expect(engine.getState().outs).toBe(0);
+    expect(engine.getState().runs).toBe(0);
+
+    engine.finalizePlay();
+    expect(engine.hasPendingPlay()).toBe(false);
+    expect(engine.getState().lastResult?.pending).toBe(false);
+  });
+
+  it('records an out when a trick catch is timed inside the window', () => {
+    const found = findPlay(
+      5,
+      (r) => !!r.fielding && r.fielding.trickable && !r.fielding.ordinaryCatch,
+    );
+    expect(found).not.toBeNull();
+    const { engine } = found!;
+    const center = engine.getState().lastResult!.fielding!.trickWindow!.centerMs;
+
+    engine.registerTrickAttempt(center); // perfectly timed dive
+    const result = engine.finalizePlay();
+    expect(result?.caught).toBe(true);
+    expect(result?.catchKind).toBe('trick');
+    expect(engine.getState().outs).toBe(1);
+  });
+
+  it('lets the ball drop for a hit when no trick is attempted', () => {
+    const found = findPlay(
+      5,
+      (r) => !!r.fielding && r.fielding.trickable && !r.fielding.ordinaryCatch,
+    );
+    expect(found).not.toBeNull();
+    const { engine } = found!;
+    const base = engine.getState().lastResult!.fielding!.baseOutcome;
+
+    const result = engine.finalizePlay();
+    expect(result?.caught).toBe(false);
+    expect(result?.outcome).toBe(base);
+  });
+});

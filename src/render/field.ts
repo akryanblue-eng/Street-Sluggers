@@ -5,6 +5,7 @@
 // for trick catches) get TODO hooks so the slice leaves room for them.
 
 import { FIELD } from '../game/constants';
+import { DEFAULT_FIELDERS, type FieldingPlay } from '../game/fielding';
 import type { GameState } from '../game/engine';
 import type { LiveView } from '../hooks/useGameEngine';
 
@@ -24,6 +25,10 @@ const COLORS = {
   shadow: 'rgba(0,0,0,0.28)',
   reticle: '#ffd24a',
   reticleHot: '#57f28c',
+  fielder: '#cfe0f5',
+  fielderOutline: '#20344f',
+  fielderActive: '#7fe3ff',
+  batter: '#ffcf6b',
 };
 
 interface Projection {
@@ -65,13 +70,22 @@ export function drawField(
   drawFoulLines(ctx, proj);
   drawWall(ctx, proj);
   drawInfield(ctx, proj);
-  drawPlayers(ctx, proj, state);
+
+  // A fielder actively making a play is drawn in motion; hold him out of the
+  // static defensive alignment so he isn't ghosted at his home spot.
+  const activePlay =
+    view.phase === 'resolving' && view.result?.fielding?.fieldable
+      ? view.result.fielding
+      : null;
+  drawPlayers(ctx, proj, activePlay?.fielder.id);
+  drawRunners(ctx, proj, state);
 
   if (view.phase === 'pitching') {
     drawReticle(ctx, proj, view.pitchProgress);
     drawPitch(ctx, proj, view.pitchProgress);
-  } else if (view.phase === 'resolving' && view.result?.trajectory) {
-    drawBattedBall(ctx, proj, view);
+  } else if (view.phase === 'resolving') {
+    if (view.result?.trajectory) drawBattedBall(ctx, proj, view);
+    if (activePlay) drawFieldingPlay(ctx, proj, activePlay, view);
   }
 }
 
@@ -198,15 +212,90 @@ function drawInfield(ctx: CanvasRenderingContext2D, proj: Projection) {
   ctx.fill();
 }
 
-function drawPlayers(ctx: CanvasRenderingContext2D, proj: Projection, _state: GameState) {
-  // Pitcher on the mound.
-  const mound = proj.toScreen(0, 60, 0);
-  drawBlob(ctx, mound.sx, mound.sy, 9 * mound.scale, '#e2e8f0', '#1c2530');
+function drawPlayers(
+  ctx: CanvasRenderingContext2D,
+  proj: Projection,
+  excludeFielderId?: string,
+) {
+  // The defensive alignment (pitcher is part of it), each at its home spot.
+  for (const f of DEFAULT_FIELDERS) {
+    if (f.id === excludeFielderId) continue;
+    const p = proj.toScreen(f.x, f.y, 0);
+    drawBlob(ctx, p.sx, p.sy, 8 * p.scale + 2, COLORS.fielder, COLORS.fielderOutline);
+  }
 
   // Batter at the plate.
   const bat = proj.toScreen(-9, 4, 0);
-  drawBlob(ctx, bat.sx, bat.sy, 11, '#ffcf6b', '#1c2530');
-  // TODO(arcade): draw fielders here to enable trick catches.
+  drawBlob(ctx, bat.sx, bat.sy, 11, COLORS.batter, COLORS.fielderOutline);
+}
+
+/** Little dots on the diamond for any runners currently aboard. */
+function drawRunners(ctx: CanvasRenderingContext2D, proj: Projection, state: GameState) {
+  const spots: Array<[number, number]> = [
+    [63, 63], // first
+    [0, 127], // second
+    [-63, 63], // third
+  ];
+  state.bases.forEach((occupied, i) => {
+    if (!occupied) return;
+    const [x, y] = spots[i];
+    const p = proj.toScreen(x, y, 0);
+    drawBlob(ctx, p.sx, p.sy, 7 * p.scale + 1, '#ffd24a', COLORS.fielderOutline);
+  });
+}
+
+/** The assigned fielder runs toward the landing spot; when the ball is
+ *  trick-eligible a closing timing ring cues the dive. */
+function drawFieldingPlay(
+  ctx: CanvasRenderingContext2D,
+  proj: Projection,
+  play: FieldingPlay,
+  view: LiveView,
+) {
+  const ballMs = view.ballAnimSeconds * 1000;
+  const arriveMs = play.trickWindow?.centerMs ?? (view.result?.trajectory?.hangTime ?? 1) * 1000;
+  const t = clamp01(ballMs / Math.max(1, arriveMs));
+
+  // Interpolate the fielder from his home spot toward the landing point.
+  const fx = play.route.from.x + (play.route.to.x - play.route.from.x) * t;
+  const fy = play.route.from.y + (play.route.to.y - play.route.from.y) * t;
+  const fp = proj.toScreen(fx, fy, 0);
+
+  // Catch target on the ground.
+  const target = proj.toScreen(play.playPoint.x, play.playPoint.y, 0);
+  ctx.beginPath();
+  ctx.arc(target.sx, target.sy, 10, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Closing timing ring during the trick window.
+  if (play.trickWindow) {
+    const { centerMs, successHalfMs } = play.trickWindow;
+    const remaining = Math.abs(centerMs - ballMs);
+    const hot = remaining <= successHalfMs;
+    const ringR = 12 + Math.min(60, remaining / 6);
+    ctx.beginPath();
+    ctx.arc(fp.sx, fp.sy, ringR, 0, Math.PI * 2);
+    ctx.strokeStyle = hot ? COLORS.reticleHot : COLORS.reticle;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+
+  drawBlob(ctx, fp.sx, fp.sy, 9 * fp.scale + 2, COLORS.fielderActive, COLORS.fielderOutline);
+
+  if (view.trickPrompt) {
+    ctx.save();
+    ctx.font = '700 16px "Trebuchet MS", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = COLORS.reticleHot;
+    ctx.fillText('TRICK CATCH!', fp.sx, fp.sy - 22);
+    ctx.restore();
+  }
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 function drawBlob(
