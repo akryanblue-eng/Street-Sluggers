@@ -15,6 +15,9 @@ This repo is a **playable vertical slice**:
 - A homer that barely clears can be **robbed at the wall**: an eligible
   outfielder sprints over, plants a foot, and — on a player-timed leap — snags it
   for an out. Mistime it and the ball's gone.
+- A **ground ball** is no longer an automatic out for landing shallow: the
+  infielder must field it and, on a **player-timed throw**, beat the runner to
+  first. Miss the window and the batter is safe.
 - **Fielders** break on the ball — including the post-rebound landing spot:
   routine flies are caught for outs, gappers fall in, and a narrow,
   player-triggered **trick-catch** window can rob a hit — or, mistimed, turn a
@@ -35,19 +38,21 @@ This repo is a **playable vertical slice**:
 
 | Action        | Keyboard              | Touch / Mouse       |
 | ------------- | --------------------- | ------------------- |
-| Contact swing | `Space` / `Enter`     | Tap                 |
-| Power swing   | `Shift` / `K`         | Long-press          |
-| Trick catch   | `Space` / `Shift`     | Tap (while in play) |
-| Start / retry | `Space` / `Enter`     | Tap **Play Ball**   |
+| Contact swing   | `Space` / `Enter` | Tap                 |
+| Power swing     | `Shift` / `K`     | Long-press          |
+| Trick catch     | `Space` / `Shift` | Tap (while in play) |
+| Throw to first  | `Space` / `Shift` | Tap (while in play) |
+| Start / retry   | `Space` / `Enter` | Tap **Play Ball**   |
 
 Swing when the closing ring snaps onto the target reticle at the plate for a
 **perfect barrel**. Early swings lift and pull the ball; late swings flatten and
 push it.
 
-Once the ball is hit, the assigned fielder runs for it. When a closing ring
-appears over the fielder (**TRICK CATCH!**), tap/press as it snaps shut to make a
-diving grab — time it well and you rob the hit; miss and the ball skips past for
-extra bases.
+Once the ball is in play, the defense reacts. A closing ring over a fielder is
+your defensive-timing cue: **TRICK CATCH!** for a diving grab, **ROB IT!** at the
+wall, or **THROW!** on a ground ball — press as it snaps shut. Time it and you
+record the out; miss it and the runner is safe (or the ball gets past for extra
+bases).
 
 ## Getting started
 
@@ -68,8 +73,9 @@ src/
     physics.ts     #   projectile trajectory + deterministic wall rebound
     outcome.ts     #   trajectory → hit outcome
     fielding.ts    #   trajectory → fielder assignment, catches, trick window
+    throwing.ts    #   ground-ball profile, pickup + throw-to-first race
     runners.ts     #   base-runner advancement
-    engine.ts      #   state machine: pitches, count, fielding, outs, innings
+    engine.ts      #   state machine: pitches, count, catch|throw plays, outs
     __tests__/     #   deterministic Vitest suites
   render/field.ts  # Canvas field + ball renderer
   hooks/           # useGameEngine — drives the engine with requestAnimationFrame
@@ -95,9 +101,15 @@ slice leaves room for the signature mechanics to come:
   homer barely clearing the wall becomes a pending, player-timed robbery for an
   eligible outfielder — built on the *same* trick-catch window and pending-play
   machinery, retaining `home_run` as the base outcome.
-- **Power swings & abilities** — swing types already flow through the physics.
+- **Ground-ball throw to first** — ✅ `throwing.ts` (SS-THROW-001): an eligible
+  grounder is a single unless the infielder fields it and a player-timed throw
+  beats the runner. The engine's pending play is now a `catch | throw` union
+  feeding the *same* outcome/runner sink — no separate scoring path.
+- **Force plays, baserunning, double plays, arm ratings** — next, on top of the
+  throw foundation.
 - **Environmental hazards & character abilities** — isolated in the pure core so
   they can modify launch/outcome/fielding without touching rendering.
 
-Deliberately **out of scope** for the current slices: throwing, roster /
-character-selection UI, a new art pipeline, backend, accounts, and multiplayer.
+Deliberately **out of scope** for the current slices: throws to bases other than
+first, force/tag logic, roster / character-selection UI, a new art pipeline,
+backend, accounts, and multiplayer.

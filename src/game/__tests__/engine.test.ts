@@ -183,3 +183,90 @@ describe('GameEngine — wall rebound integration', () => {
     expect(tally()).toBe(afterOnce);
   });
 });
+
+describe('GameEngine — ground-ball throw integration (SS-THROW-001)', () => {
+  /** Scan for a swing that produces a pending, throwable ground-ball play. */
+  function findThrowPlay(): { engine: GameEngine; center: number } | null {
+    for (let seed = 1; seed <= 20; seed++) {
+      for (let off = 80; off <= 130; off += 1) {
+        const engine = new GameEngine({ seed });
+        engine.startGame();
+        engine.beginPitch(0);
+        const contactMs = engine.getState().contactMs;
+        const r = engine.registerSwing(contactMs + off, 'contact');
+        if (r.throwing?.throwable && r.pending && engine.pendingKind() === 'throw') {
+          return { engine, center: r.throwing.window!.centerMs };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Scan for a grounder that no defender can convert into an out. */
+  function findSafeGrounder(): GameEngine | null {
+    for (let seed = 1; seed <= 20; seed++) {
+      for (let off = -20; off <= 220; off += 1) {
+        const engine = new GameEngine({ seed });
+        engine.startGame();
+        engine.beginPitch(0);
+        const contactMs = engine.getState().contactMs;
+        const r = engine.registerSwing(contactMs + off, 'contact');
+        if (r.throwing && !r.pending && r.trajectory && r.trajectory.distance < 95) {
+          return engine;
+        }
+      }
+    }
+    return null;
+  }
+
+  it('defers the throw play without touching the score (gate 8)', () => {
+    const found = findThrowPlay();
+    expect(found).not.toBeNull();
+    const { engine } = found!;
+    expect(engine.pendingKind()).toBe('throw');
+    expect(engine.activeThrowWindow()).not.toBeNull();
+    expect(engine.getState().runs).toBe(0);
+    expect(engine.getState().outs).toBe(0);
+    expect(engine.getState().bases.some(Boolean)).toBe(false);
+  });
+
+  it('a timed throw records exactly one out (gate 5)', () => {
+    const { engine, center } = findThrowPlay()!;
+    engine.registerThrowAttempt(center);
+    const final = engine.finalizePlay();
+    expect(final?.throwKind).toBe('throw-out');
+    expect(final?.outcome).toBe('out');
+    expect(engine.getState().outs).toBe(1);
+    // A second finalize cannot duplicate the out.
+    engine.finalizePlay();
+    expect(engine.getState().outs).toBe(1);
+  });
+
+  it('no throw leaves the runner safe at first exactly once (gate 6, 8)', () => {
+    const { engine } = findThrowPlay()!;
+    engine.finalizePlay(); // no attempt
+    expect(engine.getState().outs).toBe(0);
+    expect(engine.getState().bases).toEqual([true, false, false]);
+    // Repeat finalize must not advance another runner.
+    engine.finalizePlay();
+    expect(engine.getState().bases).toEqual([true, false, false]);
+  });
+
+  it('a mistimed throw is a single, not an out (gate 6)', () => {
+    const { engine, center } = findThrowPlay()!;
+    engine.registerThrowAttempt(center + 100000);
+    const final = engine.finalizePlay();
+    expect(final?.throwKind).toBe('throw-missed');
+    expect(final?.outcome).toBe('single');
+    expect(engine.getState().outs).toBe(0);
+  });
+
+  it('a short grounder is never an out just for landing shallow (gate 7)', () => {
+    const engine = findSafeGrounder();
+    expect(engine).not.toBeNull();
+    const r = engine!.getState().lastResult!;
+    expect(r.trajectory!.distance).toBeLessThan(95); // old classifier would say "out"
+    expect(r.outcome).toBe('single');
+    expect(engine!.getState().outs).toBe(0);
+  });
+});
