@@ -11,8 +11,23 @@ import { basesFor, labelFor } from './outcome';
 import { simulateBattedBall } from './physics';
 import { createRng, type Rng } from './rng';
 import { advanceRunners, EMPTY_BASES, type Bases } from './runners';
+import {
+  profileBattedBall,
+  resolveThrow,
+  resolveThrowing,
+  type ThrowAttempt,
+  type ThrowingPlay,
+  type ThrowOutcome,
+} from './throwing';
 import { resolveTiming } from './timing';
 import type { HitOutcome, PlayResult, SwingType } from './types';
+
+/** A deferred defensive play whose outcome is not yet applied to the score:
+ *  either an in-flight catch (with a trick-catch window) or a ground-ball
+ *  throw to first (with a release-timing window). */
+type PendingDefensivePlay =
+  | { kind: 'catch'; play: FieldingPlay; attempt: TrickAttempt | null }
+  | { kind: 'throw'; play: ThrowingPlay; attempt: ThrowAttempt | null };
 
 export type GamePhase = 'menu' | 'pitching' | 'resolving' | 'gameover';
 
@@ -45,9 +60,9 @@ export class GameEngine {
   private state: GameState;
   private rng: Rng;
   private readonly inningsPerGame: number;
-  /** A batted ball whose fielding outcome is not yet applied to the score,
-   *  because its trick-catch window may still change it. */
-  private pending: { play: FieldingPlay; attempt: TrickAttempt | null } | null = null;
+  /** A batted ball whose defensive outcome is not yet applied to the score,
+   *  because its catch or throw window may still change it. */
+  private pending: PendingDefensivePlay | null = null;
 
   constructor(options: EngineOptions = {}) {
     this.rng = createRng(options.seed ?? 0x51ac6);
@@ -115,19 +130,21 @@ export class GameEngine {
     const launch = computeLaunch(timing, swingType, wobble);
     const trajectory = simulateBattedBall(launch);
     const play = resolveFielding(trajectory);
+    const profile = profileBattedBall(trajectory);
+    const base = { timing, launch, trajectory };
 
-    // If a fielder can make a play (routine or trick), defer scoring until the
-    // trick-catch window closes — the player may still change the result.
-    if (play.ordinaryCatch || play.trickable) {
+    // Priority 1 — an ordinary catch (a caught fly/liner) is an out as before.
+    // A trick catch on an *air* ball also stays a catch; a low grounder that a
+    // fielder can't glove in the air routes to the throw play instead.
+    const isGroundThrow = profile.groundBall && !play.ordinaryCatch;
+    if (play.ordinaryCatch || (play.trickable && !isGroundThrow)) {
       const provisional = resolveCatch(play, null);
-      this.pending = { play, attempt: null };
+      this.pending = { kind: 'catch', play, attempt: null };
       this.state.phase = 'resolving';
       this.state.lastResult = {
+        ...base,
         outcome: provisional.outcome,
         label: this.fieldingLabel(provisional),
-        timing,
-        launch,
-        trajectory,
         fielding: play,
         pending: true,
         caught: provisional.caught,
@@ -136,13 +153,40 @@ export class GameEngine {
       return this.state.lastResult;
     }
 
-    // Home run, foul, or a clean drop no fielder can reach: settle immediately.
+    // Priority 2 — a ground ball the catch path declined: field it and throw.
+    if (isGroundThrow) {
+      const throwPlay = resolveThrowing(trajectory, profile);
+      if (throwPlay && throwPlay.throwable) {
+        const provisional = resolveThrow(throwPlay, null);
+        this.pending = { kind: 'throw', play: throwPlay, attempt: null };
+        this.state.phase = 'resolving';
+        this.state.lastResult = {
+          ...base,
+          outcome: provisional.outcome,
+          label: this.throwLabel(provisional),
+          fielding: play,
+          throwing: throwPlay,
+          pending: true,
+          throwKind: provisional.kind,
+        };
+        return this.state.lastResult;
+      }
+      // A grounder no defender can convert into an out: safe at first (single),
+      // never the old distance-derived out. Resolve immediately, no fake prompt.
+      return this.applyResult({
+        ...base,
+        outcome: 'single',
+        label: 'Base hit!',
+        fielding: play,
+        throwing: throwPlay ?? undefined,
+      });
+    }
+
+    // Priority 3 — home run, foul, or a clean drop no fielder can reach.
     return this.applyResult({
+      ...base,
       outcome: play.baseOutcome,
       label: labelFor(play.baseOutcome),
-      timing,
-      launch,
-      trajectory,
       fielding: play,
     });
   }
@@ -152,7 +196,9 @@ export class GameEngine {
    * flight. `pressMs` is the time of the press relative to contact.
    */
   registerTrickAttempt(pressMs: number): PlayResult | null {
-    if (!this.pending || this.pending.attempt !== null) return this.state.lastResult;
+    if (this.pending?.kind !== 'catch' || this.pending.attempt !== null) {
+      return this.state.lastResult;
+    }
     if (!this.pending.play.trickable) return this.state.lastResult;
 
     this.pending.attempt = { pressMs };
@@ -169,35 +215,81 @@ export class GameEngine {
     return this.state.lastResult;
   }
 
-  /** True while a batted ball's fielding play is awaiting resolution. */
+  /**
+   * Register a player-triggered throw release on a ground-ball play. `pressMs`
+   * is the time of the press relative to contact.
+   */
+  registerThrowAttempt(pressMs: number): PlayResult | null {
+    if (this.pending?.kind !== 'throw' || this.pending.attempt !== null) {
+      return this.state.lastResult;
+    }
+    this.pending.attempt = { pressMs };
+    const r = resolveThrow(this.pending.play, this.pending.attempt);
+    this.state.lastResult = this.state.lastResult && {
+      ...this.state.lastResult,
+      outcome: r.outcome,
+      label: this.throwLabel(r),
+      throwKind: r.kind,
+      pending: true,
+    };
+    return this.state.lastResult;
+  }
+
+  /** True while a batted ball's defensive play is awaiting resolution. */
   hasPendingPlay(): boolean {
     return this.pending !== null;
   }
 
+  /** Which kind of defensive play is pending, if any. */
+  pendingKind(): 'catch' | 'throw' | null {
+    return this.pending?.kind ?? null;
+  }
+
   /** The active trick-catch window (ms relative to contact), if any. */
   activeTrickWindow(): FieldingPlay['trickWindow'] {
-    return this.pending?.play.trickable ? this.pending.play.trickWindow : null;
+    if (this.pending?.kind !== 'catch') return null;
+    return this.pending.play.trickable ? this.pending.play.trickWindow : null;
+  }
+
+  /** The active throw-release window (ms relative to contact), if any. */
+  activeThrowWindow(): ThrowingPlay['window'] {
+    if (this.pending?.kind !== 'throw') return null;
+    return this.pending.play.window;
   }
 
   /**
-   * Finalize a pending fielding play: compute the outcome from the recorded
-   * trick attempt (if any) and apply it to the score.
+   * Finalize the pending defensive play — catch or throw — from its recorded
+   * attempt (if any) and apply the outcome to the score exactly once.
    */
   finalizePlay(): PlayResult | null {
     if (!this.pending) return this.state.lastResult;
-    const r = resolveCatch(this.pending.play, this.pending.attempt);
-    const play = this.pending.play;
+    const pending = this.pending;
     this.pending = null;
-    this.applyOutcome(r.outcome);
-    this.state.lastResult = {
-      ...(this.state.lastResult as PlayResult),
-      outcome: r.outcome,
-      label: this.fieldingLabel(r),
-      fielding: play,
-      caught: r.caught,
-      catchKind: r.kind,
-      pending: false,
-    };
+
+    if (pending.kind === 'catch') {
+      const r = resolveCatch(pending.play, pending.attempt);
+      this.applyOutcome(r.outcome);
+      this.state.lastResult = {
+        ...(this.state.lastResult as PlayResult),
+        outcome: r.outcome,
+        label: this.fieldingLabel(r),
+        fielding: pending.play,
+        caught: r.caught,
+        catchKind: r.kind,
+        pending: false,
+      };
+    } else {
+      const r = resolveThrow(pending.play, pending.attempt);
+      this.applyOutcome(r.outcome);
+      this.state.lastResult = {
+        ...(this.state.lastResult as PlayResult),
+        outcome: r.outcome,
+        label: this.throwLabel(r),
+        throwing: pending.play,
+        throwKind: r.kind,
+        pending: false,
+      };
+    }
     return this.state.lastResult;
   }
 
@@ -245,6 +337,19 @@ export class GameEngine {
         return `${labelFor(r.outcome)} (missed!)`;
       default:
         return labelFor(r.outcome);
+    }
+  }
+
+  private throwLabel(r: ThrowOutcome): string {
+    switch (r.kind) {
+      case 'throw-out':
+        return 'GUNNED DOWN! 🔥';
+      case 'throw-late':
+        return 'SAFE!';
+      case 'throw-missed':
+        return 'THROW PULLED WIDE — SAFE!';
+      default:
+        return 'Base hit!';
     }
   }
 
